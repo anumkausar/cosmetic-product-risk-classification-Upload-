@@ -1,0 +1,504 @@
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+
+# ============================================================
+# 1. LOAD DATA
+# ============================================================
+
+print("\nLoading dataset...")
+
+base_path = "archive/"
+
+ingredients = pd.read_csv(
+    base_path + "ingredients.csv",
+    sep="|",
+    low_memory=False
+)
+
+product_ingredients = pd.read_csv(
+    base_path + "product_ingredients.csv",
+    sep="|",
+    low_memory=False
+)
+
+products = pd.read_csv(
+    base_path + "products.csv",
+    sep="|",
+    low_memory=False
+)
+
+print("\nFiles loaded successfully!")
+
+print("Ingredients:", ingredients.shape)
+print("Product Ingredients:", product_ingredients.shape)
+print("Products:", products.shape)
+
+
+# ============================================================
+# 2. CLEAN INGREDIENT DATA
+# ============================================================
+
+print("\nCleaning ingredient data...")
+
+ingredient_data = ingredients[
+    [
+        "ingredient_id",
+        "inci_name",
+        "is_common_allergen",
+        "comedogenic_rating",
+        "is_fungal_acne_trigger"
+    ]
+].copy()
+
+
+# Convert columns to numeric
+ingredient_data["is_common_allergen"] = pd.to_numeric(
+    ingredient_data["is_common_allergen"],
+    errors="coerce"
+).fillna(0)
+
+ingredient_data["comedogenic_rating"] = pd.to_numeric(
+    ingredient_data["comedogenic_rating"],
+    errors="coerce"
+).fillna(0)
+
+ingredient_data["is_fungal_acne_trigger"] = pd.to_numeric(
+    ingredient_data["is_fungal_acne_trigger"],
+    errors="coerce"
+).fillna(0)
+
+
+# ============================================================
+# 3. CONNECT PRODUCTS WITH INGREDIENTS
+# ============================================================
+
+print("\nConnecting products with ingredients...")
+
+merged_data = product_ingredients.merge(
+    ingredient_data,
+    on="ingredient_id",
+    how="left"
+)
+
+print("Merged data shape:", merged_data.shape)
+
+
+# ============================================================
+# 4. CREATE PRODUCT LEVEL FEATURES
+# ============================================================
+
+print("\nCreating product features...")
+
+product_data = merged_data.groupby("product_id").agg(
+
+    total_ingredients=(
+        "ingredient_id",
+        "count"
+    ),
+
+    allergen_count=(
+        "is_common_allergen",
+        "sum"
+    ),
+
+    fungal_trigger_count=(
+        "is_fungal_acne_trigger",
+        "sum"
+    ),
+
+    average_comedogenic_rating=(
+        "comedogenic_rating",
+        "mean"
+    ),
+
+    maximum_comedogenic_rating=(
+        "comedogenic_rating",
+        "max"
+    )
+
+).reset_index()
+
+
+# ============================================================
+# 5. CREATE RISK SCORE
+# ============================================================
+
+print("\nCreating risk score...")
+
+product_data["risk_score"] = (
+
+    product_data["allergen_count"] * 2
+
+    + product_data["fungal_trigger_count"] * 1.5
+
+    + product_data["average_comedogenic_rating"]
+
+)
+
+
+# ============================================================
+# 6. CREATE RISK CATEGORIES
+# ============================================================
+
+product_data["risk_category"] = pd.cut(
+
+    product_data["risk_score"],
+
+    bins=[
+        -1,
+        2,
+        6,
+        np.inf
+    ],
+
+    labels=[
+        "Low Risk",
+        "Moderate Risk",
+        "Higher Risk"
+    ]
+
+)
+
+
+print("\nRisk categories created!")
+
+print(
+    product_data[
+        [
+            "product_id",
+            "risk_score",
+            "risk_category"
+        ]
+    ].head(10)
+)
+
+
+# ============================================================
+# 7. REMOVE UNKNOWN VALUES
+# ============================================================
+
+product_data = product_data.dropna(
+    subset=["risk_category"]
+)
+
+
+# ============================================================
+# 8. MACHINE LEARNING FEATURES
+# ============================================================
+
+features = [
+
+    "total_ingredients",
+    "allergen_count",
+    "fungal_trigger_count",
+    "average_comedogenic_rating",
+    "maximum_comedogenic_rating"
+
+]
+
+X = product_data[features]
+
+y = product_data["risk_category"]
+
+
+# ============================================================
+# 9. TRAIN TEST SPLIT
+# ============================================================
+
+print("\nSplitting dataset...")
+
+X_train, X_test, y_train, y_test = train_test_split(
+
+    X,
+    y,
+
+    test_size=0.20,
+
+    random_state=42,
+
+    stratify=y
+
+)
+
+
+print("Training samples:", len(X_train))
+print("Testing samples:", len(X_test))
+
+
+# ============================================================
+# 10. RANDOM FOREST MODEL
+# ============================================================
+
+print("\nTraining Random Forest model...")
+
+model = RandomForestClassifier(
+
+    n_estimators=150,
+
+    max_depth=8,
+
+    random_state=42
+
+)
+
+model.fit(
+    X_train,
+    y_train
+)
+
+
+print("Model training completed!")
+
+
+# ============================================================
+# 11. MAKE PREDICTIONS
+# ============================================================
+
+predictions = model.predict(
+    X_test
+)
+
+
+# ============================================================
+# 12. MODEL EVALUATION
+# ============================================================
+
+accuracy = accuracy_score(
+    y_test,
+    predictions
+)
+
+
+print("\n")
+print("=" * 50)
+print("MODEL RESULTS")
+print("=" * 50)
+
+print(
+    "Accuracy:",
+    round(accuracy * 100, 2),
+    "%"
+)
+
+
+print("\nClassification Report:")
+
+print(
+    classification_report(
+        y_test,
+        predictions,
+        zero_division=0
+    )
+)
+
+
+# ============================================================
+# 13. CONFUSION MATRIX
+# ============================================================
+
+print("\nCreating confusion matrix...")
+
+cm = confusion_matrix(
+
+    y_test,
+
+    predictions,
+
+    labels=model.classes_
+
+)
+
+
+plt.figure(
+    figsize=(8, 6)
+)
+
+sns.heatmap(
+
+    cm,
+
+    annot=True,
+
+    fmt="d",
+
+    xticklabels=model.classes_,
+
+    yticklabels=model.classes_
+
+)
+
+plt.title(
+    "Cosmetic Product Risk Classification"
+)
+
+plt.xlabel(
+    "Predicted Category"
+)
+
+plt.ylabel(
+    "Actual Category"
+)
+
+plt.tight_layout()
+
+plt.savefig(
+    "confusion_matrix.png"
+)
+
+plt.show()
+
+
+# ============================================================
+# 14. FEATURE IMPORTANCE
+# ============================================================
+
+print("\nCalculating feature importance...")
+
+importance = pd.DataFrame({
+
+    "Feature": features,
+
+    "Importance": model.feature_importances_
+
+})
+
+
+importance = importance.sort_values(
+
+    "Importance",
+
+    ascending=False
+
+)
+
+
+print("\nFeature Importance:")
+
+print(importance)
+
+
+plt.figure(
+    figsize=(9, 6)
+)
+
+sns.barplot(
+
+    data=importance,
+
+    x="Importance",
+
+    y="Feature"
+
+)
+
+plt.title(
+    "Important Features for Cosmetic Risk Prediction"
+)
+
+plt.xlabel(
+    "Importance"
+)
+
+plt.ylabel(
+    "Feature"
+)
+
+plt.tight_layout()
+
+plt.savefig(
+    "feature_importance.png"
+)
+
+plt.show()
+
+
+# ============================================================
+# 15. SAVE FINAL DATASET
+# ============================================================
+
+product_data.to_csv(
+
+    "cosmetic_ml_dataset.csv",
+
+    index=False
+
+)
+
+
+print("\nFinal dataset saved!")
+
+print(
+    "File: cosmetic_ml_dataset.csv"
+)
+
+
+# ============================================================
+# 16. TEST THE MODEL WITH A NEW PRODUCT
+# ============================================================
+
+print("\n")
+print("=" * 50)
+print("TESTING A NEW COSMETIC PRODUCT")
+print("=" * 50)
+
+
+# Example product information
+
+new_product = pd.DataFrame({
+
+    "total_ingredients": [18],
+
+    "allergen_count": [1],
+
+    "fungal_trigger_count": [0],
+
+    "average_comedogenic_rating": [1.2],
+
+    "maximum_comedogenic_rating": [3]
+
+})
+
+
+new_prediction = model.predict(
+    new_product
+)
+
+
+prediction_probabilities = model.predict_proba(
+    new_product
+)
+
+
+print(
+    "\nPredicted Risk Category:",
+    new_prediction[0]
+)
+
+
+print("\nPrediction probabilities:")
+
+for category, probability in zip(
+    model.classes_,
+    prediction_probabilities[0]
+):
+
+    print(
+        category,
+        ":",
+        round(probability * 100, 2),
+        "%"
+    )
+
+
+print("\n")
+print("=" * 50)
+print("PROJECT COMPLETED SUCCESSFULLY")
+print("=" * 50)
